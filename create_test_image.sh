@@ -11,12 +11,12 @@ if [ $UID -ne 0 ]; then
   exit 1
 fi
 
+echo "Patching image to work with podman..."
+cp Containerfile Containerfile.podman
+sed -i 's/MOK.crt,ro/MOK.crt,ro,relabel=shared/g' Containerfile.podman
+
 echo "Building image..."
-echo "Command: podman build -t \"$FULL_IMAGE\" --build-arg *** ."
-# Do not print the MOK.key
-set +x
-podman build -t "$FULL_IMAGE" --build-arg "MOK_KEY=$(<MOK.key)" .
-set -x
+podman build -t "$FULL_IMAGE" --secret=id=mokkey,src=MOK.key -f Containerfile.podman .
 rm test.img || true
 truncate -s 10G test.img
 podman run --rm --privileged --pid=host --security-opt label=type:unconfined_t -v /dev:/dev -v /var/lib/containers:/var/lib/containers -v .:/output "$FULL_IMAGE" bootc install to-disk --generic-image --filesystem xfs --via-loopback /output/test.img
