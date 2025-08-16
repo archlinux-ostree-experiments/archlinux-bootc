@@ -2,7 +2,8 @@ FROM quay.io/archlinux/archlinux:latest AS signer
 
 ARG PACKAGE_TAG="stable"
 ARG GRUB_MODULES="all_video boot cat configfile echo true font gfxmenu gfxterm gzio halt iso9660 jpeg minicmd normal part_apple part_msdos part_gpt password password_pbkdf2 png reboot search search_fs_uuid search_fs_file search_label sleep test video fat loadenv loopback chain efifwsetup efinet read tpm tss2 tpm2_key_protector memdisk tar squash4 xzio blscfg linux btrfs ext2 xfs tftp http efinet luks luks2 gcry_rijndael gcry_sha1 gcry_sha256 gcry_sha512 mdraid09 mdraid1x lvm serial"
-ARG GRUB_IMAGE="/boot/efi/EFI/arch-ostree/grubx64.efi"
+ARG GRUB_PACKAGE="grub-blscfg"
+ARG EFI_VENDOR="arch"
 
 RUN --mount=type=secret,id=mokkey \
     --mount=type=bind,source=MOK.crt,target=/run/secrets/MOK.crt,ro \
@@ -21,11 +22,18 @@ echo -e "5\ny\n" | GNUPGHOME=/etc/pacman.d/gnupg gpg --no-tty --command-fd 0 --e
 
 # Install the packages we need to create a general initramfs including ostree
 pacman -Sy
-pacman -S --noconfirm linux linux-firmware mkinitcpio lvm2 thin-provisioning-tools kbd amd-ucode intel-ucode ostree grub-blscfg sbsigntools
+pacman -S --noconfirm linux linux-firmware mkinitcpio lvm2 thin-provisioning-tools kbd amd-ucode intel-ucode ostree sbsigntools $GRUB_PACKAGE
+
+set +x
+echo "${MOK_KEY}" > MOK.key
+echo "Signing key written to $(pwd)/MOK.key"
+set -x
+stat "$(pwd)/MOK.key"
 
 KERNEL_VERSION=$(basename $(find /usr/lib/modules -maxdepth 1 -mindepth 1 -type d -print0))
+GRUB_VERSION=`LC_ALL=C pacman -Qi ${GRUB_PACKAGE} | grep Version | sed 's/Version *: \(.*\)/$1/'`
+GRUB_IMAGE="/usr/lib/efi/grub/${GRUB_VERSION}/EFI/${EFI_VENDOR}/grubx64.efi"
 
-# Generate a GRUB image and sign it as well as the linux kernel image
 mkdir -p "$(dirname ${GRUB_IMAGE})"
 grub-mkimage -k /run/secrets/MOK.crt -o "$GRUB_IMAGE" -O x86_64-efi -s /usr/share/grub/sbat.csv --prefix= -v $GRUB_MODULES
 sbsign --key /run/secrets/mokkey --cert /run/secrets/MOK.crt --output "$GRUB_IMAGE" "$GRUB_IMAGE"
@@ -43,7 +51,7 @@ COMPRESSION_OPTIONS=()
 MODULES_DECOMPRESS="no"
 EOF
 
-# mkinitcpio will complain when there is no /etc/vconsole.conf, so we create one
+# mkinitcpio wants a vconsole.conf, so we supply one with sane defaults
 cat <<EOF > /etc/vconsole.conf
 KEYMAP="us"
 FONT="eurlatgr"
@@ -86,20 +94,17 @@ sed -i 's/NoExtract /# NoExtract /g' /etc/pacman.conf
 pacman -Sy
 pacman -S --noconfirm linux linux-firmware \
     glibc glibc-locales \
-    efibootmgr mokutil shim-fedora grub-blscfg grub-blscfg-signed \
-    ostree bootc-git bootupd-arch-git \
+    efibootmgr mokutil shim-fedora grub-blscfg \
+    ostree bootc-git bootupd-git \
     composefs btrfs-progs xfsprogs e2fsprogs dosfstools \
-    podman buildah skopeo 
+    podman buildah skopeo
 
+# Uncomment the following line to save some space and delete remote databases
+# rm -f /var/lib/pacman/sync/*.db
+# It currently seems to use about 8 MiB, which I personally consider worthwhile for debugging purposes.
+# Moreover, it allows remote package search which can be handy from time to time, even if no packages can be installed on an immutable system.
 
-# Setup bootupd
-mkdir -p /usr/lib/bootupd/updates
-mkdir -p /usr/lib/ostree-boot/efi
-cp -Rv /boot/efi/EFI /usr/lib/ostree-boot/efi
-/usr/libexec/bootupd generate-update-metadata
-
-# Move pacmans database to /usr, so users can run `pacman -Q` commands in the final system
-rm -f /var/lib/pacman/sync/*.db
+# Setup pacman such that users can search the database on their immutable system
 mv /var/lib/pacman /usr/lib/pacman
 sed -i 's@#DBPath.*/var/lib/pacman@DBPath = /usr/lib/pacman@g' /etc/pacman.conf
 
@@ -121,8 +126,8 @@ ln -sfv sysroot/ostree /ostree
 cat /etc/passwd
 cat /etc/group
 
-# List all files in /etc that are not owned by uid/gid root
-find /etc \( ! -user root -o ! -group root \) -ls
+# List all files that are not owned by uid/gid root
+find /usr /etc \( ! -user root -o ! -group root \) -ls
 
 # Finally, list all users, groups that are managed by systemd
 systemd-analyze --no-pager cat-config sysusers.d
@@ -131,7 +136,9 @@ systemd-analyze --no-pager cat-config sysusers.d
 EOC
 
 COPY --from=signer /usr/lib/modules /usr/lib/modules
+COPY --from=signer /usr/lib/efi/* /usr/lib/efi
 COPY tmpfiles.d-var.conf /usr/lib/tmpfiles.d/bootc-integration.conf
 COPY prepare-root.conf /usr/lib/ostree/prepare-root.conf
 
+RUN /usr/libexec/bootupd generate-update-metadata
 RUN bootc container lint
