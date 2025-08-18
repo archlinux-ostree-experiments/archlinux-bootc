@@ -35,7 +35,7 @@ GRUB_VERSION=`LC_ALL=C pacman -Qi ${GRUB_PACKAGE} | grep Version | sed 's/Versio
 GRUB_IMAGE="/usr/lib/efi/grub/${GRUB_VERSION}/EFI/${EFI_VENDOR}/grubx64.efi"
 
 mkdir -p "$(dirname ${GRUB_IMAGE})"
-grub-mkimage -k /run/secrets/MOK.crt -o "$GRUB_IMAGE" -O x86_64-efi -s /usr/share/grub/sbat.csv --prefix= -v $GRUB_MODULES
+grub-mkimage -k /run/secrets/MOK.crt -o "$GRUB_IMAGE" -O x86_64-efi -s /usr/share/grub/sbat.csv --prefix= $GRUB_MODULES
 sbsign --key /run/secrets/mokkey --cert /run/secrets/MOK.crt --output "$GRUB_IMAGE" "$GRUB_IMAGE"
 sbsign --key /run/secrets/mokkey --cert /run/secrets/MOK.crt --output "/usr/lib/modules/${KERNEL_VERSION}/vmlinuz" "/usr/lib/modules/${KERNEL_VERSION}/vmlinuz"
 
@@ -58,7 +58,7 @@ FONT="eurlatgr"
 EOF
 
 # Call `mkinitcpio`, generate the initramfs
-mkinitcpio -k "$KERNEL_VERSION" -v -g "/usr/lib/modules/${KERNEL_VERSION}/initramfs.img"
+mkinitcpio -k "$KERNEL_VERSION" -g "/usr/lib/modules/${KERNEL_VERSION}/initramfs.img"
 
 # Add microcode updates
 cat /boot/*-ucode.img "/usr/lib/modules/${KERNEL_VERSION}/initramfs.img" > "/usr/lib/modules/${KERNEL_VERSION}/initramfs-ucode.img"
