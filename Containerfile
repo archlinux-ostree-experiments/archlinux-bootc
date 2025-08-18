@@ -24,12 +24,6 @@ echo -e "5\ny\n" | GNUPGHOME=/etc/pacman.d/gnupg gpg --no-tty --command-fd 0 --e
 pacman -Sy
 pacman -S --noconfirm linux linux-firmware mkinitcpio lvm2 thin-provisioning-tools kbd amd-ucode intel-ucode ostree sbsigntools $GRUB_PACKAGE
 
-set +x
-echo "${MOK_KEY}" > MOK.key
-echo "Signing key written to $(pwd)/MOK.key"
-set -x
-stat "$(pwd)/MOK.key"
-
 KERNEL_VERSION=$(basename $(find /usr/lib/modules -maxdepth 1 -mindepth 1 -type d -print0))
 GRUB_VERSION=`LC_ALL=C pacman -Qi ${GRUB_PACKAGE} | grep Version | sed 's/Version *: \(.*\)/$1/'`
 GRUB_IMAGE="/usr/lib/efi/grub/${GRUB_VERSION}/EFI/${EFI_VENDOR}/grubx64.efi"
