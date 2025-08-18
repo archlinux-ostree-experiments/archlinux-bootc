@@ -25,7 +25,7 @@ pacman -Sy
 pacman -S --noconfirm linux linux-firmware mkinitcpio lvm2 thin-provisioning-tools kbd amd-ucode intel-ucode ostree sbsigntools $GRUB_PACKAGE
 
 KERNEL_VERSION=$(basename $(find /usr/lib/modules -maxdepth 1 -mindepth 1 -type d -print0))
-GRUB_VERSION=`LC_ALL=C pacman -Qi ${GRUB_PACKAGE} | grep Version | sed 's/Version *: \(.*\)/$1/'`
+GRUB_VERSION=`LC_ALL=C pacman -Qi ${GRUB_PACKAGE} | grep Version | sed 's/Version *: \(.*\)/\1/'`
 GRUB_IMAGE="/usr/lib/efi/grub/${GRUB_VERSION}/EFI/${EFI_VENDOR}/grubx64.efi"
 
 mkdir -p "$(dirname ${GRUB_IMAGE})"
@@ -65,6 +65,8 @@ ARG PACKAGE_TAG="stable"
 
 LABEL containers.bootc 1
 
+COPY --from=signer /usr/lib/efi /usr/lib/efi
+
 RUN <<EOC
 set -euxo pipefail
 
@@ -93,12 +95,17 @@ pacman -S --noconfirm linux linux-firmware \
     composefs btrfs-progs xfsprogs e2fsprogs dosfstools \
     podman buildah skopeo
 
+# Generate bootupd metadata
+find /usr/lib/efi
+/usr/libexec/bootupd -v generate-update-metadata
+
 # Uncomment the following line to save some space and delete remote databases
 # rm -f /var/lib/pacman/sync/*.db
 # It currently seems to use about 8 MiB, which I personally consider worthwhile for debugging purposes.
 # Moreover, it allows remote package search which can be handy from time to time, even if no packages can be installed on an immutable system.
 
 # Setup pacman such that users can search the database on their immutable system
+# Note: bootupd uses package data so this snippet has to come after bootupd metadata generation
 mv /var/lib/pacman /usr/lib/pacman
 sed -i 's@#DBPath.*/var/lib/pacman@DBPath = /usr/lib/pacman@g' /etc/pacman.conf
 
@@ -130,9 +137,7 @@ systemd-analyze --no-pager cat-config sysusers.d
 EOC
 
 COPY --from=signer /usr/lib/modules /usr/lib/modules
-COPY --from=signer /usr/lib/efi/* /usr/lib/efi
 COPY tmpfiles.d-var.conf /usr/lib/tmpfiles.d/bootc-integration.conf
 COPY prepare-root.conf /usr/lib/ostree/prepare-root.conf
 
-RUN /usr/libexec/bootupd generate-update-metadata
 RUN bootc container lint
