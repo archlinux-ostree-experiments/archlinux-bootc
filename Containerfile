@@ -22,7 +22,7 @@ echo -e "5\ny\n" | GNUPGHOME=/etc/pacman.d/gnupg gpg --no-tty --command-fd 0 --e
 
 # Install the packages we need to create a general initramfs including ostree
 pacman -Sy
-pacman -S --noconfirm linux linux-firmware mkinitcpio lvm2 thin-provisioning-tools kbd amd-ucode intel-ucode ostree sbsigntools $GRUB_PACKAGE
+pacman -S --noconfirm linux linux-firmware mkinitcpio lvm2 thin-provisioning-tools kbd amd-ucode intel-ucode ostree sbsigntools openssl $GRUB_PACKAGE
 
 KERNEL_VERSION=$(basename $(find /usr/lib/modules -maxdepth 1 -mindepth 1 -type d -print0))
 GRUB_VERSION=`LC_ALL=C pacman -Qi ${GRUB_PACKAGE} | grep Version | sed 's/Version *: \(.*\)/\1/'`
@@ -30,8 +30,19 @@ GRUB_IMAGE="/usr/lib/efi/grub/${GRUB_VERSION}/EFI/${EFI_VENDOR}/grubx64.efi"
 
 mkdir -p "$(dirname ${GRUB_IMAGE})"
 grub-mkimage -k /run/secrets/MOK.crt -o "$GRUB_IMAGE" -O x86_64-efi -s /usr/share/grub/sbat.csv --prefix= $GRUB_MODULES
+
+# Sign kernel and grub images
 sbsign --key /run/secrets/mokkey --cert /run/secrets/MOK.crt --output "$GRUB_IMAGE" "$GRUB_IMAGE"
 sbsign --key /run/secrets/mokkey --cert /run/secrets/MOK.crt --output "/usr/lib/modules/${KERNEL_VERSION}/vmlinuz" "/usr/lib/modules/${KERNEL_VERSION}/vmlinuz"
+
+# Verify that kernel and grub were signed correctly
+sbverify --cert /run/secrets/MOK.crt "$GRUB_IMAGE"
+sbverify --cert /run/secrets/MOK.crt "/usr/lib/modules/${KERNEL_VERSION}/vmlinuz"
+
+# Provide the certificate for the derived image
+mkdir -p /usr/share/mok
+cp /run/secrets/MOK.crt /usr/share/mok/MOK.crt
+openssl x509 -inform pem -in /usr/share/mok/MOK.crt -outform der -out /usr/share/mok/MOK.cer
 
 # Create a general initramfs
 # mkinitcpio configuration
@@ -66,6 +77,7 @@ ARG PACKAGE_TAG="stable"
 LABEL containers.bootc 1
 
 COPY --from=signer /usr/lib/efi /usr/lib/efi
+COPY --from=signer /usr/share/mok /usr/share/mok
 
 RUN <<EOC
 set -euxo pipefail
@@ -86,11 +98,12 @@ sed -i 's/NoExtract /# NoExtract /g' /etc/pacman.conf
 # linux: While we dont need linux as we get everything from the `signer` above, we want to have the package metadata to enable chunking
 # glibc: We need to reinstall this, because it doesnt come with locales in the default image
 # mokutil: While not strictly needed, it is small and can be _very_ handy in order to register our MOK cert with fedoras shim on installation
+# sbsigntools: Similar to mokutil, this can be handy for debugging purposes (sbverify) or could be used to craft signatures with a custom owner key
 # The filesystem tools are needed during bootcs OS installation in order to create the filesystems on the target disk
 pacman -Sy
 pacman -S --noconfirm linux linux-firmware \
     glibc glibc-locales \
-    efibootmgr mokutil shim-fedora grub-blscfg \
+    efibootmgr mokutil sbsigntools shim-fedora grub-blscfg \
     ostree bootc-git bootupd-git \
     composefs btrfs-progs xfsprogs e2fsprogs dosfstools \
     podman buildah skopeo
